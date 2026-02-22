@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPARK Multi-VM Manager (Cyber-Red Edition v2.3)
+# SPARK Multi-VM Manager (Cyber-Red Edition v2.4)
 set -uo pipefail
 
 VM_DIR="$HOME/vms"
@@ -12,6 +12,20 @@ R='\033[0;31m'       # Red
 BR='\033[1;31m'      # Bold Red
 DARK='\033[0;90m'    # Dark Grey
 NC='\033[0m'         # No Color
+
+# ========================================================================
+# Supported OS list
+# ========================================================================
+declare -A OS_OPTIONS=(
+    ["Ubuntu 22.04"]="ubuntu|jammy|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|ubuntu22|ubuntu|ubuntu"
+    ["Ubuntu 24.04"]="ubuntu|noble|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|ubuntu24|ubuntu|ubuntu"
+    ["Debian 11"]="debian|bullseye|https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2|debian11|debian|debian"
+    ["Debian 12"]="debian|bookworm|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2|debian12|debian|debian"
+    ["Fedora 40"]="fedora|40|https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-40-1.14.x86_64.qcow2|fedora40|fedora|fedora"
+    ["CentOS Stream 9"]="centos|stream9|https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2|centos9|centos|centos"
+    ["AlmaLinux 9"]="almalinux|9|https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2|almalinux9|alma|alma"
+    ["Rocky Linux 9"]="rockylinux|9|https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2|rocky9|rocky|rocky"
+)
 
 # ========================================================================
 # UI & Header
@@ -94,20 +108,36 @@ load_vm_config() {
 
 create_new_vm() {
     display_header
-    print_status "INFO" "OS: Debian 12 (Stable)"
     
-    local BASE_IMG="$VM_DIR/debian-12-base.qcow2"
-    local IMG_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
+    # OS Selection
+    print_status "INFO" "Select OS for New Node:"
+    mapfile -t os_names < <(printf "%s\n" "${!OS_OPTIONS[@]}" | sort)
+    for i in "${!os_names[@]}"; do
+        echo -e "  ${BR}$((i+1)))${NC} ${os_names[$i]}"
+    done
+    echo -en "${BR}OS Choice [1]: ${NC}"; read -r os_choice
+    os_choice=${os_choice:-1}
     
+    local selected_os_name="${os_names[$((os_choice-1))]}"
+    local os_data="${OS_OPTIONS[$selected_os_name]}"
+    
+    # Parse OS string (Format: family|codename|url|prefix|default_user|...)
+    IFS='|' read -r OS_FAMILY OS_CODENAME IMG_URL IMG_PREFIX DEFAULT_USER _ <<< "$os_data"
+    
+    local BASE_IMG="$VM_DIR/${IMG_PREFIX}-base.qcow2"
+    
+    echo -e "${DARK}--------------------------------------------------------${NC}"
     echo -en "${BR}VM Name: ${NC}"; read -r VM_NAME
     
     echo -e "  ${BR}1)${NC} host (Standard)"
     echo -e "  ${BR}2)${NC} Ryzen 9950x (AMD Spoof)"
-    echo -e "  ${BR}3)${NC} Custom (Manual String)"
+    echo -e "  ${BR}3)${NC} Intel Pentium Gold G6400 (Intel Spoof)"
+    echo -e "  ${BR}4)${NC} Custom (Manual String)"
     echo -en "${BR}CPU Choice [1]: ${NC}"; read -r c
     case ${c:-1} in
         2) CPU_MODEL="Ryzen 9950x" ;;
-        3) echo -en "${BR}Enter QEMU CPU string: ${NC}"; read -r CPU_MODEL ;;
+        3) CPU_MODEL="Pentium Gold G6400" ;;
+        4) echo -en "${BR}Enter QEMU CPU string: ${NC}"; read -r CPU_MODEL ;;
         *) CPU_MODEL="host" ;;
     esac
 
@@ -115,14 +145,14 @@ create_new_vm() {
     echo -en "${BR}CPUs [2]: ${NC}"; read -r CPUS; CPUS=${CPUS:-2}
     echo -en "${BR}SSH Port [2222]: ${NC}"; read -r SSH_PORT; SSH_PORT=${SSH_PORT:-2222}
     echo -en "${BR}Disk [20G]: ${NC}"; read -r DISK_SIZE; DISK_SIZE=${DISK_SIZE:-20G}
-    echo -en "${BR}User [debian]: ${NC}"; read -r USERNAME; USERNAME=${USERNAME:-debian}
+    echo -en "${BR}User [${DEFAULT_USER}]: ${NC}"; read -r USERNAME; USERNAME=${USERNAME:-$DEFAULT_USER}
     echo -en "${BR}Pass: ${NC}"; read -rs PASSWORD; echo
     
-    HOSTNAME="$VM_NAME"; GUI_MODE="false"; OS_TYPE="Debian"
+    HOSTNAME="$VM_NAME"; GUI_MODE="false"; OS_TYPE="$selected_os_name"
     IMG_FILE="$VM_DIR/$VM_NAME.qcow2"; SEED_FILE="$VM_DIR/$VM_NAME-seed.iso"
 
     if [[ ! -f "$BASE_IMG" ]]; then
-        print_status "INFO" "Downloading Base Image..."
+        print_status "INFO" "Downloading Base Image ($selected_os_name)..."
         wget -q --show-progress "$IMG_URL" -O "$BASE_IMG"
     fi
 
@@ -131,7 +161,7 @@ create_new_vm() {
     
     generate_seed
     save_vm_config
-    print_status "SUCCESS" "Node $VM_NAME initialized."
+    print_status "SUCCESS" "Node $VM_NAME initialized with $selected_os_name."
     read -rp "Press Enter to return..."
 }
 
@@ -167,10 +197,11 @@ edit_vm_config() {
                 2) echo -en "${BR}New CPU Count: ${NC}"; read -r CPUS ;;
                 3) echo -en "${BR}New SSH Port: ${NC}"; read -r SSH_PORT ;;
                 4) 
-                    echo -e "  ${BR}1)${NC} host | ${BR}2)${NC} Ryzen 9950x | ${BR}3)${NC} Custom"
+                    echo -e "  ${BR}1)${NC} host | ${BR}2)${NC} Ryzen 9950x | ${BR}3)${NC} Pentium Gold G6400 | ${BR}4)${NC} Custom"
                     read -r c
                     [[ $c == "2" ]] && CPU_MODEL="Ryzen 9950x"
-                    [[ $c == "3" ]] && { echo -en "String: "; read -r CPU_MODEL; }
+                    [[ $c == "3" ]] && CPU_MODEL="Pentium Gold G6400"
+                    [[ $c == "4" ]] && { echo -en "String: "; read -r CPU_MODEL; }
                     [[ $c == "1" ]] && CPU_MODEL="host"
                     ;;
                 5) save_vm_config; break ;;
@@ -187,6 +218,8 @@ start_vm() {
         local CPU_FLAGS
         if [[ "$CPU_MODEL" == "Ryzen 9950x" ]]; then
             CPU_FLAGS="max,vendor=AuthenticAMD,model-id='AMD Ryzen 9 9950X 16-Core Processor',kvm=off,+topoext"
+        elif [[ "$CPU_MODEL" == "Pentium Gold G6400" ]]; then
+            CPU_FLAGS="max,vendor=GenuineIntel,model-id='Intel(R) Pentium(R) Gold G6400 CPU @ 4.00GHz',kvm=off"
         elif [[ "$CPU_MODEL" != "host" ]]; then
             CPU_FLAGS="$CPU_MODEL,kvm=off"
         else
